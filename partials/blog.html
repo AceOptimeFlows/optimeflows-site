@@ -1,0 +1,28 @@
+<section class="section">
+  <div class="container">
+    <h2 data-i18n="menu.blog">Diario</h2>
+    <p id="blogHint" class="lead">Elige un día del calendario para leer lo escrito.</p>
+
+    <div class="blog-wrap" style="margin-top:12px">
+      <div class="cal-panel">
+        <div class="cal-toolbar">
+          <div class="controls">
+            <button id="prevMonth" class="btn">◀</button>
+            <strong id="calHead">Mes Año</strong>
+            <button id="nextMonth" class="btn">▶</button>
+          </div>
+          <div>
+            <select id="monthSel"></select>
+            <select id="yearSel"></select>
+          </div>
+        </div>
+        <div id="calGrid"></div>
+      </div>
+
+      <div id="dayRead">
+        <!-- Aquí se muestra la entrada seleccionada -->
+        <p class="muted">Selecciona un día…</p>
+      </div>
+    </div>
+  </div>
+</section>
