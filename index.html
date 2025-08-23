@@ -24,6 +24,7 @@
       <li><a data-route href="#/blog"            data-i18n="menu.blog">Diario</a></li>
       <li><a data-route href="#/publicaciones"   data-i18n="menu.publications">Publicaciones</a></li>
       <li><a data-route href="#/apps"            data-i18n="menu.apps">Apps y desarrollos</a></li>
+      <li><a data-route href="#/ecos" data-i18n="menu.ecos">Ecos</a></li>
       <li><a data-route href="#/proyectos"       data-i18n="menu.projects">Proyectos</a></li>
       <li><a data-route href="#/contacto"        data-i18n="menu.contact">Contacto</a></li>
       <li><a data-route href="#/redes"           data-i18n="menu.social">Redes</a></li>
@@ -50,31 +51,32 @@
     </div>
   </footer>
 
-  <!-- Floating Music Player -->
-  <div id="musicPlayer" class="player">
-    <div class="player-header">
-      <strong>🎧 <span data-i18n="player.title">Música</span></strong>
-      <div class="player-actions">
-        <button id="playerMin" aria-label="Minimizar">–</button>
-        <button id="playerClose" aria-label="Cerrar">✕</button>
-      </div>
-    </div>
-    <div class="player-body">
-      <div class="player-info">
-        <div id="trackTitle">Track</div>
-      </div>
-      <div class="player-controls">
-        <button id="btnPrev" aria-label="Anterior">⏮</button>
-        <button id="btnPlay" aria-label="Reproducir/Pausar">▶️</button>
-        <button id="btnNext" aria-label="Siguiente">⏭</button>
-      </div>
-      <div class="player-volume">
-        <label for="volRange" data-i18n="player.volume">Volumen</label>
-        <input id="volRange" type="range" min="0" max="1" step="0.01">
-      </div>
-      <div class="player-playlist" id="playlist"></div>
+<!-- Floating Music Player -->
+<div id="musicPlayer" class="player">
+  <div class="player-header">
+    <strong>🎧 <span data-i18n="player.title">Música</span></strong>
+    <div class="player-actions">
+      <button id="playerMin" aria-label="Minimizar">–</button>
+      <button id="playerClose" aria-label="Cerrar">✕</button>
     </div>
   </div>
+  <div class="player-body">
+    <div class="player-info">
+      <div id="trackTitle">Track</div>
+    </div>
+    <div class="player-controls">
+      <button id="btnPrev" aria-label="Anterior">⏮</button>
+      <button id="btnPlay" aria-label="Reproducir/Pausar">▶️</button>
+      <button id="btnNext" aria-label="Siguiente">⏭</button>
+    </div>
+    <div class="player-volume">
+      <label for="volRange" data-i18n="player.volume">Volumen</label>
+      <input id="volRange" type="range" min="0" max="1" step="0.01">
+    </div>
+    <div class="player-playlist" id="playlist"></div>
+  </div>
+</div>
+
 
   <!-- ========= MODAL GLOBAL (único) ========= -->
   <div class="modal" id="mediaModal" aria-hidden="true">

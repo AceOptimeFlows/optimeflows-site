@@ -1,6 +1,26 @@
 <section class="section">
   <div class="container">
     <h2 data-i18n="menu.apps">Apps y desarrollos</h2>
-    <div id="appsGrid" class="card-grid" style="margin-top:12px"></div>
+
+    <div id="appsRoot" class="apps-root" style="margin-top:12px">
+      <!-- Escenario con 3 esferas -->
+      <div id="appsStage" class="app-stage card">
+        <div class="app-spheres">
+          <button class="sphere-btn" data-kind="util" >
+            <span>UTILIDADES</span>
+          </button>
+          <button class="sphere-btn" data-kind="game">
+            <span>JUEGOS</span>
+          </button>
+          <button class="sphere-btn" data-kind="elo">
+            <span>COHERENCIAS</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Contenedor de detalle (se llena por JS) -->
+      <div id="appsDetail"></div>
+    </div>
   </div>
 </section>
+

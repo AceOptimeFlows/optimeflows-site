@@ -24,6 +24,15 @@ function parseCssTimeToMs(v, defMs){
 }
 function norm(s){ return (s||"").toString().normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase(); }
 
+/* Scroll con offset de topbar (para que nada quede debajo del menú) */
+function scrollToViewWithOffset(el, behavior="smooth"){
+  if (!el) return;
+  const topbar = $(".topbar");
+  const offset = topbar ? topbar.getBoundingClientRect().height + 12 : 70;
+  const y = el.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo({ top: Math.max(0, y), left: 0, behavior });
+}
+
 /* ========= State ========= */
 const STATE = {
   lang: localStorage.getItem("lang") || (navigator.language?.startsWith("es") ? "es" : "en"),
@@ -34,6 +43,7 @@ const STATE = {
     "/blog": "partials/blog.html",
     "/publicaciones": "partials/publicaciones.html",
     "/apps": "partials/apps.html",
+    "/ecos": "partials/ecos.html",
     "/proyectos": "partials/proyectos.html",
     "/actualidad": "partials/actualidad.html",
     "/enlaces": "partials/enlaces.html",
@@ -49,7 +59,7 @@ const STATE = {
 
 const SECTION_THEME = {
   "/": "home","/servicios":"servicios","/about":"about","/blog":"blog",
-  "/publicaciones":"publicaciones","/apps":"apps","/proyectos":"proyectos",
+  "/publicaciones":"publicaciones","/apps":"apps","/ecos":"ecos","/proyectos":"proyectos",
   "/actualidad":"actualidad","/enlaces":"enlaces","/buscar":"buscar",
   "/contacto":"contacto","/redes":"redes",
 };
@@ -65,16 +75,19 @@ async function navigate(path){
   setSectionTheme(path);
 
   if (path === "/publicaciones") setupPublicaciones();
-  if (path === "/apps")         renderApps();
-  if (path === "/proyectos")    renderProjects();
+  if (path === "/apps")         renderApps?.();
+  if (path === "/ecos") renderEcos();
+  if (path === "/proyectos")    renderProjects?.();
   if (path === "/contacto")     setupContactForm();
   if (path === "/about")        setupAbout(true);
-  if (path === "/servicios")    renderServicios();
-  if (path === "/blog")         setupBlog();          // ← solo local
-  if (path === "/actualidad")   renderNews();
-  if (path === "/enlaces")      renderLinks();
-  if (path === "/buscar")       setupSearch();
+  if (path === "/servicios")    renderServicios?.();
+  if (path === "/blog")         requestAnimationFrame(setupBlog); // ⬅️ defer 1 frame
+  if (path === "/actualidad")   renderNews?.();
+  if (path === "/enlaces")      renderLinks?.();
   setupVowelOrbit();
+
+  // reset scroll al cambiar de ruta
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 
   STATE.currentRoute = path;
 
@@ -94,6 +107,9 @@ async function navigate(path){
     const r = a.getAttribute("href").replace("#","");
     a.classList.toggle("active", r === path);
   });
+
+  // 🔧 Limpieza de tooltips fantasmas
+  killGhostTooltips();
 }
 function setSectionTheme(path){ document.body.setAttribute("data-section", SECTION_THEME[path] || "home"); }
 function setupNav(){
@@ -127,7 +143,7 @@ function applyI18N(){
     const val = t(key);
     if (val) el.setAttribute("value", val);
   });
-  $("#year").textContent = new Date().getFullYear();
+  const y=$("#year"); if (y) y.textContent = new Date().getFullYear();
 }
 
 function setLang(lang){
@@ -139,14 +155,14 @@ function setLang(lang){
   buildSearchIndex();
 
   if (STATE.currentRoute === "/publicaciones") renderPublicationsUIRefresh();
-  if (STATE.currentRoute === "/apps") renderApps();
-  if (STATE.currentRoute === "/proyectos") renderProjects();
+  if (STATE.currentRoute === "/apps") renderApps?.();
+  if (STATE.currentRoute === "/proyectos") renderProjects?.();
   if (STATE.currentRoute === "/about") setupAbout(true);
-  if (STATE.currentRoute === "/servicios") renderServicios();
-  if (STATE.currentRoute === "/blog") setupBlog();
-  if (STATE.currentRoute === "/actualidad") renderNews();
-  if (STATE.currentRoute === "/enlaces") renderLinks();
-  if (STATE.currentRoute === "/buscar") setupSearch();
+  if (STATE.currentRoute === "/servicios") renderServicios?.();
+  if (STATE.currentRoute === "/blog") requestAnimationFrame(setupBlog); // ⬅️ defer 1 frame
+  if (STATE.currentRoute === "/actualidad") renderNews?.();
+  if (STATE.currentRoute === "/enlaces") renderLinks?.();
+  if (STATE.currentRoute) killGhostTooltips(); // limpia en cambio de idioma
 
   setupVowelOrbit();
 }
@@ -159,17 +175,15 @@ function setupPublicaciones(){
     btn.classList.add("active");
     renderPublications(btn.dataset.tab);
   }));
-  // por defecto
   renderPublications("estructuremas");
 
-  // modal (para imagen/video/youtube)
   const closeEls = [$("#modalClose"), $("#modalBackdrop")].filter(Boolean);
   closeEls.forEach(el=> el.addEventListener("click", closeModal));
   window.addEventListener("keydown", (e)=>{ if (e.key==="Escape") closeModal(); });
 }
-
 function renderPublications(cat){
   const grid = $("#pubGrid");
+  if (!grid) return;
   grid.innerHTML = "";
   const items = (CONTENT.publications || [])
     .filter(p => p.cat === cat)
@@ -185,7 +199,6 @@ function renderPublications(cat){
   items.forEach(item => {
     const el = document.createElement("article");
     el.className = "card";
-    // Título NO se traduce (es string)
     el.innerHTML = `
       <h3>${item.title}</h3>
       <p>${(item.desc?.[STATE.lang]) || ""}</p>
@@ -197,42 +210,29 @@ function renderPublications(cat){
     grid.appendChild(el);
   });
 }
-
 function renderPublicationsUIRefresh(){
   const active = $(".tab-btn.active")?.dataset.tab || "estructuremas";
   renderPublications(active);
 }
-
 function openMedia(item){
   const type = (item.mediaType||"").toLowerCase();
-
-  // PDFs: abrir en pestaña nueva directamente
   if (type === "pdf"){
     if (item.src) window.open(item.src, "_blank", "noopener");
     return;
   }
-
-  // Otros tipos: en modal
   const modal   = $("#mediaModal");
   const body    = $("#modalBody");
   const titleEl = $("#modalTitle");
   const openNew = $("#modalOpenNew");
-
   titleEl.textContent = item.title || "Media";
   body.innerHTML = "";
   openNew.href = item.src || "#";
-
   if (type === "gif" || type === "image"){
-    const img = document.createElement("img");
-    img.src = item.src; img.alt = titleEl.textContent;
-    body.appendChild(img);
+    const img = document.createElement("img"); img.src = item.src; img.alt = titleEl.textContent; body.appendChild(img);
   } else if (type === "video"){
-    const video = document.createElement("video");
-    video.controls = true;
+    const video = document.createElement("video"); video.controls = true;
     if (item.poster) video.poster = item.poster;
-    const src = document.createElement("source");
-    src.src = item.src; src.type = "video/mp4";
-    video.appendChild(src);
+    const src = document.createElement("source"); src.src = item.src; src.type = "video/mp4"; video.appendChild(src);
     body.appendChild(video);
   } else if (type === "youtube"){
     const ytId = extractYouTubeId(item.src);
@@ -242,27 +242,22 @@ function openMedia(item){
     iframe.allowFullscreen = true;
     body.appendChild(iframe);
   } else {
-    // Cualquier otra cosa: abre en pestaña nueva
     if (item.src) window.open(item.src, "_blank", "noopener");
     return;
   }
-
   modal.classList.add("show");
   modal.setAttribute("aria-hidden","false");
 }
 function closeModal(){
-  const m = $("#mediaModal");
-  $("#modalBody").innerHTML="";
-  m.classList.remove("show");
-  m.setAttribute("aria-hidden","true");
+  const m = $("#mediaModal"); $("#modalBody").innerHTML="";
+  m.classList.remove("show"); m.setAttribute("aria-hidden","true");
 }
 function extractYouTubeId(url){
   try{
     const u=new URL(url);
     if(u.hostname.includes("youtu.be")) return u.pathname.slice(1);
     if(u.searchParams.get("v")) return u.searchParams.get("v");
-    const m=u.pathname.match(/\/embed\/([^\/\?]+)/);
-    if(m) return m[1];
+    const m=u.pathname.match(/\/embed\/([^\/\?]+)/); if(m) return m[1];
   }catch{}
   return url.split("/").pop();
 }
@@ -362,40 +357,212 @@ function setupAbout(forceReset=false){
 }
 
 /* ========= Servicios ========= */
+/* Burbujas en flex (alineadas) → click grupo → grid → click servicio → detalle
+   + scroll preciso con offset de topbar */
 function renderServicios(){
   const wrap = $("#servicesList");
   if (!wrap) return;
+
+  // CSS mínimo para tarjetas de precios + figuras de columna derecha (una vez)
+  if (!document.getElementById("pricingCSS")) {
+    const st = document.createElement("style");
+    st.id = "pricingCSS";
+    st.textContent = `
+      .pricing-grid{display:flex;flex-wrap:wrap;gap:12px;justify-content:center}
+      .pricing-card{flex:0 1 280px;border-radius:14px;padding:14px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04)}
+      .pricing-card h5{margin:0 0 6px 0;font-size:1rem}
+      .pricing-card .price{font-weight:700;margin:4px 0 0}
+      .exp-side figure.side-figure{margin:12px 0 0}
+      .exp-side figure.side-figure img{width:100%;height:auto;border-radius:8px;display:block}
+      .exp-side figure.side-figure figcaption{margin-top:6px;text-align:center;font-size:.85rem;opacity:.75;font-style:italic}
+    `;
+    document.head.appendChild(st);
+  }
+
+  // Si el contenedor tiene la clase 'card-grid' (por el HTML original), la quitamos.
+  wrap.classList.remove("card-grid");
   wrap.innerHTML = "";
-  (I18N[STATE.lang].servicios.items||[]).forEach(s=>{
-    const el=document.createElement("article");
-    el.className="card";
-    el.innerHTML=`<h3>${s.h}</h3><p>${s.p}</p>`;
-    wrap.appendChild(el);
+
+  const groups = CONTENT.serviceGroups || [];
+  if (!groups.length){
+    (I18N[STATE.lang].servicios.items||[]).forEach(s=>{
+      const el=document.createElement("article");
+      el.className="card";
+      el.innerHTML=`<h3>${s.h}</h3><p>${s.p}</p>`;
+      wrap.appendChild(el);
+    });
+    return;
+  }
+
+  // Escenario con 3 burbujas centradas
+  const stage = document.createElement("div");
+  stage.id = "servicesStage";
+  stage.className = "svc-stage card";
+  stage.innerHTML = `<div class="svc-stage-inner"></div>`;
+  wrap.appendChild(stage);
+  const inner = stage.querySelector(".svc-stage-inner");
+
+  groups.slice(0,3).forEach((g,idx)=>{
+    const b = document.createElement("button");
+    b.className = "svc-bubble";
+    b.innerHTML = `<div class="bubble-title">${g.title?.[STATE.lang]||g.title?.es||""}</div>`;
+    b.addEventListener("click", ()=> showGroup(idx));
+    inner.appendChild(b);
   });
+
+  // Al abrir un grupo, mostramos solo sus servicios
+  function showGroup(index){
+    stage.remove();
+
+    const group = groups[index];
+    const g = document.createElement("div");
+    g.className = "service-group";
+    g.innerHTML = `
+      <div class="svc-group-head">
+        <h3>${group.title?.[STATE.lang]||group.title?.es||""}</h3>
+        <p class="lead">${group.subtitle?.[STATE.lang]||group.subtitle?.es||""}</p>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="btnBackGroups">← ${STATE.lang==="es"?"Volver":"Back"}</button>
+      </div>
+      <div class="svc-grid card-grid"></div>
+    `;
+    const grid = g.querySelector(".svc-grid");
+    wrap.appendChild(g);
+    scrollToViewWithOffset(g);
+
+    g.querySelector("#btnBackGroups").addEventListener("click", ()=>{
+      g.remove();
+      renderServicios();
+      scrollToViewWithOffset($("#servicesList"));
+    });
+
+    group.items.forEach(item=>{
+      let s = null;
+      if (item.ref){
+        s = (CONTENT.services||[]).find(x=> x.key === item.ref);
+        if (!s){
+          const list = I18N[STATE.lang].servicios.items || [];
+          const found = list.find(i => norm(i.h).includes(norm(item.ref)));
+          if (found) s = { key:item.ref, title:{es:found.h,en:found.h}, tagline:{es:found.p,en:found.p} };
+        }
+      } else {
+        s = item;
+      }
+      if (!s) return;
+
+      const card = document.createElement("article");
+      card.className = "card svc-card";
+      card.innerHTML = `
+        <h3 class="svc-card-title">${s.title?.[STATE.lang]||s.title?.es||""}</h3>
+        <p class="svc-card-sub">${s.tagline?.[STATE.lang]||s.tagline?.es||""}</p>
+      `;
+      grid.appendChild(card);
+
+      if (s.detail){
+        card.classList.add("is-expandable");
+        card.addEventListener("click", ()=>{
+          // quitar detalle previo
+          g.querySelector(".service-expanded")?.remove();
+
+          // --- separar bloques: párrafos vs imágenes ---
+          const blocks = Array.isArray(s.detail.blocks) ? s.detail.blocks : [];
+          const pBlocks   = blocks.filter(b => b.type === "p");
+          const imgBlocks = blocks.filter(b => b.type === "img");
+
+          // ---- PRECIOS (si hay) ----
+          let pricingHTML = "";
+          if (Array.isArray(s.pricing) && s.pricing.length){
+            const title = STATE.lang==="es" ? "Precios" : "Pricing";
+            const items = s.pricing.map(p=>{
+              const tt = (p.title?.[STATE.lang]||p.title?.es||p.title?.en||"");
+              const pr = (p.price?.[STATE.lang]||p.price?.es||p.price?.en||"");
+              const pe = (p.period?.[STATE.lang]||p.period?.es||p.period?.en||"");
+              const feats = (p.features||[]).map(f=> (typeof f==="string") ? f : (f[STATE.lang]||f.es||f.en)).map(f=>`<li>${f}</li>`).join("");
+              return `<div class="pricing-card">
+                        <h5>${tt}</h5>
+                        <div class="price">${pr}${pe?` · <span class="muted">${pe}</span>`:""}</div>
+                        ${feats?`<ul class="checklist" style="margin-top:6px">${feats}</ul>`:""}
+                      </div>`;
+            }).join("");
+            pricingHTML = `<section class="svc-pricing" style="margin-top:14px">
+                             <h4 style="margin-bottom:8px">${title}</h4>
+                             <div class="pricing-grid">${items}</div>
+                           </section>`;
+          }
+
+          const exp = document.createElement("div");
+          exp.className = "card service-expanded grid-span-all";
+
+          // solo texto en la columna izquierda
+          const flow = pBlocks.map(b => `<p>${b.html?.[STATE.lang]||b.html?.es||""}</p>`).join("");
+
+          const inc=(s.detail.includes||[]).map(x=>`<li>${x[STATE.lang]||x.es||x}</li>`).join("");
+          const ben=(s.detail.benefits||[]).map(x=>`<li>${x[STATE.lang]||x.es||x}</li>`).join("");
+
+          exp.innerHTML = `
+            <header class="exp-head">
+              <h3>${s.title?.[STATE.lang]||s.title?.es||""}</h3>
+              <div class="exp-actions">
+                <a href="#/contacto" data-route class="btn primary">${STATE.lang==="es"?"Solicitar información":"Request info"}</a>
+                <button class="btn ghost" id="closeSrv">Cerrar</button>
+              </div>
+            </header>
+            <div class="exp-body">
+              <div class="exp-main">${flow}</div>
+              <aside class="exp-side">
+                ${inc?`<section class="side-includes"><h4>Qué obtienes</h4><ul class="checklist">${inc}</ul></section>`:""}
+                ${ben?`<section class="side-benefits"><h4>Beneficios</h4><ul class="checklist">${ben}</ul></section>`:""}
+              </aside>
+            </div>
+            ${pricingHTML}
+          `;
+          grid.appendChild(exp);
+
+          // ---- mover imágenes a la columna derecha ----
+          const includesSec = exp.querySelector(".side-includes");
+          const benefitsSec = exp.querySelector(".side-benefits");
+          const makeFigure = (b) => {
+            const fig = document.createElement("figure");
+            fig.className = "side-figure";
+            const img = document.createElement("img");
+            img.src = b.src;
+            img.alt = (b.alt && (b.alt[STATE.lang]||b.alt.es||b.alt.en)) || "";
+            fig.appendChild(img);
+            const capText = (b.caption && (b.caption[STATE.lang]||b.caption.es||b.caption.en)) || "";
+            if (capText) {
+              const cap = document.createElement("figcaption");
+              cap.textContent = capText;
+              fig.appendChild(cap);
+            }
+            return fig;
+          };
+          if (imgBlocks[0] && includesSec) includesSec.appendChild(makeFigure(imgBlocks[0]));
+          if (imgBlocks[1] && benefitsSec) benefitsSec.appendChild(makeFigure(imgBlocks[1]));
+          for (let i=2;i<imgBlocks.length;i++){
+            (benefitsSec || includesSec || exp.querySelector(".exp-main")).appendChild(makeFigure(imgBlocks[i]));
+          }
+
+          exp.querySelector("#closeSrv")?.addEventListener("click", ()=> { exp.remove(); killGhostTooltips(); });
+          scrollToViewWithOffset(exp);
+          killGhostTooltips();
+        });
+      }
+    });
+
+    scrollToViewWithOffset(g);
+  }
+
+  // seguridad adicional
+  killGhostTooltips();
 }
 
 /* ========= Blog / Diario (solo local) ========= */
-function formatDateKey(key){
-  const [y,m,d] = key.split("-").map(Number);
-  if (STATE.lang==="es"){
-    return `${String(d).padStart(2,"0")}/${String(m).padStart(2,"0")}/${y}`;
-  }
-  const dt = new Date(y, m-1, d);
-  return dt.toLocaleDateString("en-US",{month:"short",day:"2-digit",year:"numeric"});
-}
-function hasAnyEntryLocal(dateKey){
-  if (CONTENT.blogEntries?.[dateKey]) return true;
-  if (CONTENT.publications?.some(p => p.date === dateKey)) return true;
-  // también si el entry trae media/adiciones sin texto
-  const e = CONTENT.blogEntries?.[dateKey];
-  if (e && (Array.isArray(e.media) || Array.isArray(e.additions))) return true;
-  return false;
-}
 function setupBlog(){
   const head = $("#calHead"), grid = $("#calGrid"), read = $("#dayRead");
   const monthSel = $("#monthSel"), yearSel = $("#yearSel");
+  if (!head || !grid || !monthSel || !yearSel) return; // guardas por si el partial no está listo
 
-  const months = I18N[STATE.lang].blog.monthNames.split(",");
+  const months = (I18N[STATE.lang].blog.monthNames || "Enero,Febrero,Marzo,Abril,Mayo,Junio,Julio,Agosto,Septiembre,Octubre,Noviembre,Diciembre").split(",");
   monthSel.innerHTML = months.map((m,i)=>`<option value="${i}">${m}</option>`).join("");
 
   const current = new Date();
@@ -405,13 +572,111 @@ function setupBlog(){
   yearSel.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join("");
   yearSel.value = viewYear;
 
+  function hasAnyEntryLocal(dateKey){
+    if (CONTENT.blogEntries?.[dateKey]) return true;
+    if (CONTENT.publications?.some(p => p.date === dateKey)) return true;
+    const e = CONTENT.blogEntries?.[dateKey];
+    if (e && (Array.isArray(e.media) || Array.isArray(e.additions) || Array.isArray(e.blocks))) return true;
+    return false;
+  }
+
+  function formatDateKey(key){
+    const [y,m,d] = key.split("-").map(Number);
+    if (STATE.lang==="es"){
+      return `${String(d).padStart(2,"0")}/${String(m).padStart(2,"0")}/${y}`;
+    }
+    const dt = new Date(y, m-1, d);
+    return dt.toLocaleDateString("en-US",{month:"short",day:"2-digit",year:"numeric"});
+  }
+
+  function extractYouTubeId(url){
+    try{
+      const u=new URL(url);
+      if(u.hostname.includes("youtu.be")) return u.pathname.slice(1);
+      if(u.searchParams.get("v")) return u.searchParams.get("v");
+      const m=u.pathname.match(/\/embed\/([^\/\?]+)/); if(m) return m[1];
+    }catch{}
+    return (url||"").split("/").pop();
+  }
+
+  /* === NUEVO: parser de imágenes inline dentro del texto del día ===
+     Soporta:
+       1) Markdown:  ![ALT](URL){side=right caption="Pie de foto"}
+       2) Shortcode: [img side=left src="URL" alt="ALT" cap="Pie de foto"]
+     Consejos:
+       - Escribe cada imagen en su propia línea (separada por líneas en blanco).
+  */
+  function parseInlineBlogMarkup(rawText){
+    if (!rawText) return { html: "", used: false };
+    let text = String(rawText);
+
+    // Helpers
+    const esc = s => s==null ? "" : String(s);
+    const fig = (side, src, alt, cap) =>
+      `<figure class="blog-img ${side==='left'?'left':'right'}">
+        <img src="${esc(src)}" alt="${esc(alt)}">
+        ${cap ? `<figcaption>${esc(cap)}</figcaption>` : ""}
+      </figure>`;
+
+    // 1) Shortcode [img ...]
+    //    Acepta side=left|right, src="", alt="", cap=""
+    const scRe = /\[img([^\]]*)\]/gi;
+    text = text.replace(scRe, (_, attrs) => {
+      const get = (k, def="")=>{
+        const m = new RegExp(`${k}\\s*=\\s*"(.*?)"`, "i").exec(attrs) ||
+                  new RegExp(`${k}\\s*=\\s*'(.*?)'`, "i").exec(attrs) ||
+                  new RegExp(`${k}\\s*=\\s*([^\\s"']+)`, "i").exec(attrs);
+        return m ? m[1] : def;
+      };
+      const side = (get("side","right").toLowerCase()==="left") ? "left" : "right";
+      const src  = get("src","");
+      const alt  = get("alt","");
+      const cap  = get("cap","");
+      if (!src) return ""; // si no hay src, no insertamos nada
+      return `\n\n${fig(side, src, alt, cap)}\n\n`;
+    });
+
+    // 2) Markdown ![ALT](URL){...}
+    //    Lee side=left|right y caption="..."/'...'
+    const mdImgRe = /!\[(.*?)\]\((.*?)\)(\{([^}]+)\})?/g;
+    text = text.replace(mdImgRe, (_m, alt, src, _braced, inside) => {
+      let side = "right", cap = "";
+      if (inside){
+        const sideM = /(^|\s)side\s*=\s*(left|right)(\s|$)/i.exec(inside);
+        if (sideM) side = sideM[2].toLowerCase()==="left" ? "left" : "right";
+        const capM1 = /caption\s*=\s*"([^"]*)"/i.exec(inside);
+        const capM2 = /caption\s*=\s*'([^']*)'/i.exec(inside);
+        const capM3 = /caption\s*=\s*([^\s]+)/i.exec(inside);
+        cap = (capM1?.[1] || capM2?.[1] || capM3?.[1] || "").trim();
+      }
+      if (!src) return "";
+      return `\n\n${fig(side, src, alt, cap)}\n\n`;
+    });
+
+    // Tokenización simple por dobles saltos de línea → párrafos
+    const parts = text.split(/\n{2,}/).map(s=>s.trim()).filter(Boolean);
+    let used = false;
+    const html = parts.map(chunk=>{
+      if (/^<figure\b/i.test(chunk) && /<\/figure>$/.test(chunk)){
+        used = true;
+        return chunk; // ya es una figura, la dejamos tal cual
+      }
+      // Párrafo normal; permitimos saltos simples dentro
+      const safe = chunk.replace(/\n/g, ' ');
+      return `<p>${safe}</p>`;
+    }).join("\n");
+
+    return { html, used };
+  }
+
   function renderCalendar(){
     const first = new Date(viewYear, viewMonth, 1);
     const startIdx = (first.getDay()+6)%7; // lunes=0
     const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
+
     head.textContent = `${months[viewMonth]} ${viewYear}`;
 
-    const week = I18N[STATE.lang].blog.weekNames.split(",");
+    const week = (I18N[STATE.lang].blog.weekNames || "Lun,Mar,Mié,Jue,Vie,Sáb,Dom").split(",");
     grid.innerHTML = `<div class="cal-head">${week.join("</div><div class='cal-head'>")}</div>`;
 
     for (let i=0;i<startIdx;i++) grid.appendChild(document.createElement("div"));
@@ -431,30 +696,24 @@ function setupBlog(){
     const entryObj = CONTENT.blogEntries?.[key] || {};
     const entryText = entryObj[STATE.lang] || entryObj.es || "";
 
-    // Adiciones:
-    // 1) Auto desde publicaciones locales del mismo día
     const todaysPubs = (CONTENT.publications||[])
       .filter(p => p.date === key)
       .map(p => ({ from:'local', id:p.id, title:p.title, cat:p.cat, src:p.src }));
 
-    // 2) Adiciones extra definidas a mano en data.js (opcional)
     const manualAdds = (entryObj.additions||[])
       .map(a => ({ from:'manual', title:a.title||'Archivo', src:a.src||'#', cat:a.cat||'' }));
 
     const allAdds = [...todaysPubs, ...manualAdds];
 
-    // Media (imágenes/videos) opcional en data.js
-    const mediaList = Array.isArray(entryObj.media) ? entryObj.media : [];
-
+    // ========= NUEVO: flujo por bloques intercalados =========
+    const hasBlocks = Array.isArray(entryObj.blocks) && entryObj.blocks.length>0;
     let html = `<h3>${formatDateKey(key)}</h3>`;
 
-    // Bloque de adiciones (al principio)
     if (allAdds.length){
       const catNames = I18N[STATE.lang].pubCats || {};
       const items = allAdds.map(a=>{
         const cat = catNames[a.cat] || a.cat || '';
         if (a.from === 'local'){
-          // enlaza a Publicaciones y abre el item
           return `<li><a href="#/publicaciones" data-route data-open-pub="${a.id}">
             ${I18N[STATE.lang].blog.additionsPub.replace("{cat}", cat).replace("{title}", a.title)}
           </a></li>`;
@@ -468,36 +727,120 @@ function setupBlog(){
       html += `<h4>${I18N[STATE.lang].blog.additionsTitle}</h4><ul>${items}</ul><hr>`;
     }
 
-    // Galería/media alrededor del texto (si hay)
-    if (mediaList.length){
-      const mediaHtml = mediaList.map(m=>{
-        const type = (m.type||"").toLowerCase();
-        if (type === "image"){
-          return `<figure class="media-item"><img src="${m.src}" alt=""></figure>`;
-        } else if (type === "video"){
-          return `<figure class="media-item"><video controls src="${m.src}"></video></figure>`;
-        } else if (type === "youtube"){
-          const id = extractYouTubeId(m.src);
-          return `<figure class="media-item"><iframe src="https://www.youtube.com/embed/${id}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></figure>`;
-        } else {
-          return `<figure class="media-item"><a class="btn" href="${m.src}" target="_blank" rel="noopener">Abrir</a></figure>`;
+    if (hasBlocks){
+      // Alterna izquierda/derecha y mete un pequeño “stagger” para no coincidir en altura
+      let sideToggle = "right";
+      let stagger = 0; // 0/1 para clases .stagger-a / .stagger-b
+      const flow = entryObj.blocks.map(b=>{
+        if (b.type === "p"){
+          const txt = (b.html?.[STATE.lang]||b.html?.es||b.text?.[STATE.lang]||b.text?.es||b.html||b.text||"");
+          return `<p>${txt}</p>`;
         }
+        if (b.type === "img"){
+          const side = (b.side||b.float||sideToggle);
+          sideToggle = sideToggle==="right" ? "left" : "right";
+          const stagClass = stagger===0 ? "stagger-a" : "stagger-b";
+          stagger = 1 - stagger;
+          const alt = (b.alt && (b.alt[STATE.lang]||b.alt.es||b.alt.en)) || "";
+          const cap = (b.caption && (b.caption[STATE.lang]||b.caption.es||b.caption.en)) || "";
+          return `
+            <figure class="blog-img ${side} ${stagClass}">
+              <img src="${b.src}" alt="${alt}">
+              ${cap ? `<figcaption>${cap}</figcaption>` : ""}
+            </figure>`;
+        }
+        if (b.type === "youtube"){
+          const id = extractYouTubeId(b.src||"");
+          const side = (b.side||b.float||sideToggle);
+          sideToggle = sideToggle==="right" ? "left" : "right";
+          const stagClass = stagger===0 ? "stagger-a" : "stagger-b";
+          stagger = 1 - stagger;
+          return `
+            <figure class="blog-img ${side} ${stagClass}">
+              <iframe src="https://www.youtube.com/embed/${id}"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowfullscreen></iframe>
+            </figure>`;
+        }
+        if (b.type === "video"){
+          const side = (b.side||b.float||sideToggle);
+          sideToggle = sideToggle==="right" ? "left" : "right";
+          const stagClass = stagger===0 ? "stagger-a" : "stagger-b";
+          stagger = 1 - stagger;
+          return `
+            <figure class="blog-img ${side} ${stagClass}">
+              <video controls src="${b.src}"></video>
+            </figure>`;
+        }
+        return "";
       }).join("");
 
-      html += `<div class="blog-media-grid">
-        <div class="media-col">${mediaHtml}</div>
-        <div class="entry-col"><p>${entryText || `<span class="muted">${I18N[STATE.lang].blog.empty}</span>`}</p></div>
-      </div>`;
+      html += `<div class="blog-flow">${flow}<div class="clearfix"></div></div>`;
     } else {
-      // solo texto
-      html += entryText
-        ? `<p>${entryText}</p>`
-        : `<p class="muted">${I18N[STATE.lang].blog.empty}</p>`;
+      // ====== NUEVO: parsear imágenes inline dentro del texto ======
+      const parsed = parseInlineBlogMarkup(entryText || "");
+      if (parsed.used){
+        html += `<div class="blog-flow">${parsed.html}<div class="clearfix"></div></div>`;
+      } else {
+        // ====== fallback: tu diseño anterior ======
+        const mediaList = Array.isArray(entryObj.media) ? entryObj.media : [];
+        if (mediaList.length){
+          const mediaHtml = mediaList.map(m=>{
+            const type = (m.type||"").toLowerCase();
+            if (type === "image"){
+              return `<figure class="media-item"><img src="${m.src}" alt=""></figure>`;
+            } else if (type === "video"){
+              return `<figure class="media-item"><video controls src="${m.src}"></video></figure>`;
+            } else if (type === "youtube"){
+              const id = extractYouTubeId(m.src);
+              return `<figure class="media-item"><iframe src="https://www.youtube.com/embed/${id}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></figure>`;
+            } else {
+              return `<figure class="media-item"><a class="btn" href="${m.src}" target="_blank" rel="noopener">Abrir</a></figure>`;
+            }
+          }).join("");
+
+          html += `<div class="blog-media-grid">
+            <div class="media-col">${mediaHtml}</div>
+            <div class="entry-col"><p>${entryText || `<span class="muted">${I18N[STATE.lang].blog.empty}</span>`}</p></div>
+          </div>`;
+        } else {
+          html += entryText
+            ? `<p>${entryText}</p>`
+            : `<p class="muted">${I18N[STATE.lang].blog.empty}</p>`;
+        }
+      }
     }
 
     read.innerHTML = html;
 
-    // Enlaces que abren publicaciones del día
+    /* === COLOR-CODING de enlaces en "Adiciones del día" === */
+    const ul = read.querySelector("h4 + ul");
+    if (ul) {
+      ul.classList.add("blog-additions");
+      ul.querySelectorAll("a").forEach(a=>{
+        const href = (a.getAttribute("href")||"").toLowerCase();
+        const isRoute = a.hasAttribute("data-route");
+        let type = "";
+
+        if (isRoute && a.hasAttribute("data-open-pub")) {
+          // publicaciones locales → miramos mediaType
+          const id = parseInt(a.getAttribute("data-open-pub"), 10);
+          const pub = (CONTENT.publications||[]).find(p=>p.id===id);
+          const mt  = (pub?.mediaType||"").toLowerCase();
+          if (mt === "pdf") type = "pdf";
+          else if (mt === "video") type = "video";
+        } else {
+          // manuales → detectamos por URL/extension
+          if (href.endsWith(".pdf")) type = "pdf";
+          else if (/\.(mp4|webm|mov|mkv)(\?|$)/.test(href) || href.includes("youtube.com") || href.includes("youtu.be")) type = "video";
+          else if (/\.(mp3|wav|ogg|m4a|flac)(\?|$)/.test(href) || href.includes("spotify.com") || href.includes("soundcloud.com") || href.includes("music.youtube") || href.includes("bandcamp.com")) type = "audio";
+          else if (href.includes("/#/apps") || href.includes("/apps")) type = "app";
+        }
+
+        if (type) a.classList.add("link-"+type);
+      });
+    }
+
     $$('a[data-open-pub]', read).forEach(a=>{
       a.addEventListener('click', (e)=>{
         e.preventDefault();
@@ -507,27 +850,27 @@ function setupBlog(){
     });
   }
 
-  $("#prevMonth").addEventListener("click", ()=>{
+  $("#prevMonth")?.addEventListener("click", ()=>{
     viewMonth--;
-    if (viewMonth<0){ viewMonth=11; viewYear--; yearSel.value=viewYear; }
-    monthSel.value=viewMonth;
+    if (viewMonth<0){ viewMonth=11; viewYear--; if (yearSel) yearSel.value=viewYear; }
+    if (monthSel) monthSel.value=viewMonth;
     renderCalendar();
   });
-  $("#nextMonth").addEventListener("click", ()=>{
+  $("#nextMonth")?.addEventListener("click", ()=>{
     viewMonth++;
-    if (viewMonth>11){ viewMonth=0; viewYear++; yearSel.value=viewYear; }
-    monthSel.value=viewMonth;
+    if (viewMonth>11){ viewMonth=0; viewYear++; if (yearSel) yearSel.value=viewYear; }
+    if (monthSel) monthSel.value=viewMonth;
     renderCalendar();
   });
   monthSel.addEventListener("change", (e)=>{ viewMonth=+e.target.value; renderCalendar(); });
   yearSel.addEventListener("change",  (e)=>{ viewYear=+e.target.value;  renderCalendar(); });
 
+  // pintar calendario (tras montar todo)
   renderCalendar();
-  $("#blogHint").textContent = I18N[STATE.lang].blog.pick;
 
-  // abrir día desde búsqueda
-  window.addEventListener("open-blog-day", (ev)=> openDay(ev.detail), { once:true });
+  const hint=$("#blogHint"); if (hint) hint.textContent = I18N[STATE.lang].blog.pick;
 }
+
 
 /* ========= Actualidad / Enlaces / Buscador ========= */
 function renderNews(){
@@ -561,34 +904,23 @@ function buildSearchIndex(){
   const lang = STATE.lang;
   const idx = [];
 
-  // publicaciones (título string)
   (CONTENT.publications||[]).forEach(p=>{
-    idx.push({
-      type:"publication",
-      id:p.id, route:"/publicaciones", cat:p.cat,
+    idx.push({ type:"publication", id:p.id, route:"/publicaciones", cat:p.cat,
       title:p.title, snippet:(p.desc?.[lang]||"")+" "+(I18N[lang].pubCats?.[p.cat]||""),
-      date:p.date||null,
-      _t:norm((p.title||"")+" "+(p.desc?.[lang]||"")+" "+p.cat)
-    });
+      date:p.date||null, _t:norm((p.title||"")+" "+(p.desc?.[lang]||"")+" "+p.cat) });
   });
-
-  // apps / proyectos
   (CONTENT.apps||[]).forEach(a=>{
     idx.push({type:"app",route:"/apps",title:a.title?.[lang]||"",snippet:a.desc?.[lang]||"",_t:norm((a.title?.[lang]||"")+" "+(a.desc?.[lang]||""))});
   });
   (CONTENT.projects||[]).forEach(p=>{
     idx.push({type:"project",route:"/proyectos",title:p.title?.[lang]||"",snippet:p.desc?.[lang]||"",_t:norm((p.title?.[lang]||"")+" "+(p.desc?.[lang]||""))});
   });
-
-  // blog local (texto)
   Object.entries(CONTENT.blogEntries||{}).forEach(([date,obj])=>{
     const text = obj?.[lang] || obj?.es || "";
     if (text){
       idx.push({type:"blog",route:"/blog",date,title:date,snippet:text.slice(0,180)+"…",_t:norm(date+" "+text)});
     }
   });
-
-  // about + servicios + news + links
   const A=I18N[lang].about||{};
   ["p1","p2","p3","p4","p5","p6","p7","poetic1","poetic2","poetic3"].forEach(k=>{
     const v=A[k]; if(!v)return;
@@ -598,7 +930,7 @@ function buildSearchIndex(){
     idx.push({type:"servicios",route:"/servicios",title:s.h,snippet:s.p,_t:norm(s.h+" "+s.p)});
   });
   (CONTENT.news||[]).forEach(n=>{
-    const snip = n.body?.[lang] ? n.body[lang].slice(0,180)+"…" : "";
+    const snip = n.body?.[lang] ? n.body[lang].slice(0,180)+"…" : "" ;
     idx.push({type:"news",route:"/actualidad",id:n.id,date:n.date||null,title:n.title?.[lang]||"",snippet:snip,_t:norm((n.title?.[lang]||"")+" "+(n.body?.[lang]||""))});
   });
   (CONTENT.links||[]).forEach(l=>{
@@ -708,7 +1040,7 @@ function setupVowelOrbit(){
         const from=c.slots[c.map[i]];
         const to  =c.slots[(c.map[i]+c.dir+c.vowels.length)%c.vowels.length];
         const x=from.x+(to.x-from.x)*tt;
-        const yBase=from.y+(to.y-from.y?0:0)*tt;
+        const yBase=from.y;
         const yArc=c.amp*Math.sin(Math.PI*tt);
         c.floats[i].style.transform=`translate(${x}px, ${yBase+yArc}px)`;
       }
@@ -761,23 +1093,36 @@ function initVorbit(el){
 /* ========= Player ========= */
 let audio, currentIndex=0;
 function setupPlayer(){
-  audio=new Audio(); audio.preload="metadata";
-  const saved=JSON.parse(localStorage.getItem("player")||"{}");
-  currentIndex=saved.index||0;
-  audio.volume=saved.volume??0.6;
-  $("#volRange").value=audio.volume;
-  $("#btnPlay").addEventListener("click", togglePlay);
-  $("#btnPrev").addEventListener("click", ()=> changeTrack(-1));
-  $("#btnNext").addEventListener("click", ()=> changeTrack(1));
-  $("#volRange").addEventListener("input",(e)=>{ audio.volume=+e.target.value; persistPlayer(); });
-  $("#playerClose").addEventListener("click", ()=>{ audio.pause(); $("#musicPlayer").style.display="none"; });
-  $("#playerMin").addEventListener("click", ()=> $("#musicPlayer").classList.toggle("minimized"));
+  audio = new Audio();
+  audio.preload = "metadata";
+  const saved = JSON.parse(localStorage.getItem("player")||"{}");
+  currentIndex = saved.index || 0;
+  audio.volume = saved.volume ?? 0.6;
+  const vol = $("#volRange");
+  if (vol) vol.value = audio.volume;
+
+  $("#btnPlay")?.addEventListener("click", togglePlay);
+  $("#btnPrev")?.addEventListener("click", ()=> changeTrack(-1));
+  $("#btnNext")?.addEventListener("click", ()=> changeTrack(1));
+  vol?.addEventListener("input",(e)=>{ audio.volume = +e.target.value; persistPlayer(); });
+
+  // 👇 Cambiado: ahora la X elimina todo el reproductor
+  $("#playerClose")?.addEventListener("click", ()=>{ 
+    audio.pause();
+    const mp = $("#musicPlayer");
+    if (mp) mp.remove();   // elimina del DOM
+  });
+
+
+
   buildPlaylist();
   loadTrack(currentIndex);
   audio.addEventListener("ended", ()=> changeTrack(1));
 }
+
 function buildPlaylist(){
-  const list=$("#playlist"); list.innerHTML="";
+  const list=$("#playlist"); if (!list) return;
+  list.innerHTML="";
   (CONTENT.playlist||[]).forEach((trk,i)=>{
     const row=document.createElement("div");
     row.className="playlist-item";
@@ -796,15 +1141,17 @@ function updatePlaylistUI(){
     row.classList.toggle("playing", i===currentIndex && !audio.paused);
     row.querySelector("button").textContent = (i===currentIndex && !audio.paused) ? "⏸" : "▶️";
   });
-  $("#trackTitle").textContent = CONTENT.playlist?.[currentIndex]?.title || "Track";
-  $("#btnPlay").textContent = audio.paused ? "▶️" : "⏸";
+  const title=$("#trackTitle"); if (title) title.textContent = CONTENT.playlist?.[currentIndex]?.title || "Track";
+  const play=$("#btnPlay"); if (play) play.textContent = (document.querySelector("audio")?.paused ?? true) ? "▶️" : "⏸";
 }
 function loadTrack(i, autoplay=false){
   const trk=CONTENT.playlist?.[i];
   if(!trk) return;
-  audio.src=trk.src;
-  $("#trackTitle").textContent=trk.title;
-  if(autoplay) audio.play().catch(()=>{});
+  const audioEl = document.querySelector("audio") || new Audio();
+  if (!document.querySelector("audio")) document.body.appendChild(audioEl);
+  audioEl.preload="metadata";
+  audioEl.src=trk.src;
+  if(autoplay) audioEl.play().catch(()=>{});
   updatePlaylistUI();
   persistPlayer();
 }
@@ -813,22 +1160,448 @@ function changeTrack(step){
   loadTrack(currentIndex,true);
 }
 function togglePlay(){
-  if(audio.paused){ audio.play().catch(()=>{}); }
-  else { audio.pause(); }
+  const audioEl = document.querySelector("audio"); if (!audioEl) return;
+  if(audioEl.paused){ audioEl.play().catch(()=>{}); }
+  else { audioEl.pause(); }
   updatePlaylistUI();
 }
 function persistPlayer(){
-  localStorage.setItem("player", JSON.stringify({index:currentIndex,volume:audio.volume}));
+  const audioEl = document.querySelector("audio");
+  localStorage.setItem("player", JSON.stringify({index:currentIndex,volume:audioEl?.volume??0.6}));
+}
+
+/* ========= Tooltip fantasma killer ========= */
+function killGhostTooltips(){
+  // 1) tooltips comunes por clase
+  $$(".tooltip,.tippy-box,.microtip,.ui-tip,.hint,.balloon,.titlebox").forEach(n=> n.remove());
+  // 2) por texto exacto (ES/EN) y posición flotante
+  const texts = [
+    I18N?.[STATE.lang]?.ui?.openNew || "Abrir en pestaña nueva",
+    "Open in new tab"
+  ];
+  document.querySelectorAll("body *").forEach(n=>{
+    try{
+      const txt=(n.textContent||"").trim();
+      if(!txt || !texts.includes(txt)) return;
+      const cs=getComputedStyle(n);
+      if (["fixed","absolute"].includes(cs.position) && n.offsetWidth<240 && n.offsetHeight<80){
+        const host=n.closest("div,section,aside,span")||n;
+        host.remove();
+      }
+    }catch{}
+  });
 }
 
 /* ========= Boot ========= */
 document.addEventListener("DOMContentLoaded", ()=>{
-  $("#year").textContent = new Date().getFullYear();
-  $("#langSelect").value = STATE.lang;
-  $("#langSelect").addEventListener("change",(e)=> setLang(e.target.value));
+  const year=$("#year"); if (year) year.textContent = new Date().getFullYear();
+  const sel=$("#langSelect"); if (sel){ sel.value = STATE.lang; sel.addEventListener("change",(e)=> setLang(e.target.value)); }
   applyI18N();
   setupNav();
   handleHash();
   setupPlayer();
   buildSearchIndex();
+  killGhostTooltips();
+document.addEventListener("click", (e)=>{
+  const closeBtn = e.target.closest("#playerClose");
+  if (closeBtn){
+    try { (document.querySelector("audio")||{}).pause?.(); } catch{}
+    const mp = document.getElementById("musicPlayer");
+    if (mp) mp.remove();
+    return;
+  }
+
+  const minBtn = e.target.closest("#playerMin");
+  if (minBtn){
+    const mp = document.getElementById("musicPlayer");
+    if (mp){
+      mp.classList.toggle("minimized");
+
+      // Fallback por si alguna regla extraña pisa el CSS:
+      const body = mp.querySelector(".player-body");
+      if (body){
+        const minimized = mp.classList.contains("minimized");
+        body.style.display = minimized ? "none" : "";
+      }
+
+      // (Opcional) cambia el símbolo del botón
+      try { minBtn.textContent = mp.classList.contains("minimized") ? "＋" : "–"; } catch {}
+    }
+    return;
+  }
 });
+
+
+});
+function renderApps(){
+  const root   = $("#appsRoot");
+  const stage  = $("#appsStage");
+  const detail = $("#appsDetail");
+  if (!root || !stage || !detail) return;
+
+  const L = STATE.lang;
+
+  // ===== Helpers =====
+  const dataByKind = {
+    util: () => CONTENT.appsUtil || [],
+    game: () => CONTENT.appsGames || [],
+    elo:  () => CONTENT.appsElo  || [],
+  };
+  const titlesByKind = {
+    util: { es:"UTILIDADES", en:"UTILITIES" },
+    game: { es:"JUEGOS",      en:"GAMES" },
+    elo:  { es:"COHERENCIAS", en:"COHERENCES" },
+  };
+
+  function clearDetail(){ detail.innerHTML = ""; }
+
+  function buildIndex(items, kind){
+    const wrap = document.createElement("nav");
+    wrap.className = "app-index";
+    const list = document.createElement("div");
+    list.className = "app-index-list";
+    items.forEach((it, i)=>{
+      const a = document.createElement("a");
+      a.href = `#${kind}-${i}`;
+      a.textContent = it.title?.[L] || it.title?.[STATE.lang==='es'?'es':'en'] || it.title || (kind.toUpperCase()+" "+(i+1));
+      a.addEventListener("click", (e)=>{
+        e.preventDefault();
+        const sec = document.getElementById(`${kind}-${i}`);
+        scrollToViewWithOffset(sec, "smooth");
+      });
+      list.appendChild(a);
+    });
+    wrap.appendChild(list);
+    return wrap;
+  }
+
+  // ===== Construye UNA fila de detalle con media a la IZQ y texto a la DCHA =====
+  function buildDetailRow(a, kind){
+    const row = document.createElement("div");
+    row.className = "proj-item"; // grid: 300px 1fr (ya lo tienes en CSS)
+
+    // Columna IZQUIERDA: media stack (imagen + video)
+    const left = document.createElement("div");
+    left.className = "proj-media";
+    if (a.image || a.video){
+      const stack = document.createElement("div");
+      stack.className = "app-media-stack";
+      if (a.image){
+        const fig = document.createElement("div");
+        fig.className = "app-media";
+        fig.innerHTML = `<img src="${a.image}" alt="${(a.alt?.[L]||a.title?.[L]||'image')}">`;
+        stack.appendChild(fig);
+      }
+      if (a.video){
+        const vid = document.createElement("div");
+        vid.className = "app-media";
+        vid.innerHTML = `<video controls ${a.thumb ? `poster="${a.thumb}"` : ""} src="${a.video}"></video>`;
+        stack.appendChild(vid);
+      }
+      left.appendChild(stack);
+    }
+    row.appendChild(left);
+
+    // Columna DERECHA: texto (título + descripción) + footer + botones
+    const right = document.createElement("div");
+    right.className = "proj-text";
+    const title = a.title?.[L] || a.title?.es || a.title || "—";
+    const desc  = a.desc?.[L]  || a.desc?.es  || "";
+
+    // Coherencias: si no hay media, mostramos la cita entrecomillada
+    const isElo = (kind === "elo");
+    const mainHtml = isElo
+      ? `<blockquote>${desc}</blockquote>`
+      : `<h4 style="margin:.2rem 0 .4rem">${title}</h4><p>${desc}</p>`;
+
+    right.innerHTML = isElo
+      ? mainHtml
+      : `<h4 style="margin:.2rem 0 .4rem">${title}</h4><p>${desc}</p>`;
+
+    if (isElo && a.author){
+      const author = (typeof a.author === "string")
+        ? a.author
+        : (a.author?.[L] || a.author?.es || "");
+      if (author){
+        const cite = document.createElement("div");
+        cite.className = "muted";
+        cite.style.marginTop = "6px";
+        cite.style.textAlign = "right";
+        cite.textContent = `— ${author}`;
+        right.appendChild(cite);
+      }
+    }
+
+    if (a.footer?.[L] || a.footer?.es){
+      const foot = document.createElement("div");
+      foot.className = "app-footer";
+      foot.innerHTML = `<p>${a.footer?.[L] || a.footer?.es}</p>`;
+      right.appendChild(foot);
+    }
+
+    if (a.download || a.repo){
+      const btns = document.createElement("div");
+      btns.className = "app-buttons";
+      if (a.download){
+        const d = document.createElement("a");
+        d.className = "btn"; d.href = a.download; d.target="_blank"; d.rel="noopener";
+        d.textContent = L==="es" ? "Descargar" : "Download";
+        btns.appendChild(d);
+      }
+      if (a.repo){
+        const r = document.createElement("a");
+        r.className = "btn"; r.href = a.repo; r.target="_blank"; r.rel="noopener";
+        r.textContent = L==="es" ? "Enlace al proyecto" : "Project link";
+        btns.appendChild(r);
+      }
+      right.appendChild(btns);
+    }
+
+    row.appendChild(right);
+    return row;
+  }
+
+  function openKind(kind){
+    stage.style.display = "none";
+    detail.innerHTML = "";
+
+    const items = (dataByKind[kind] && dataByKind[kind]()) || [];
+    const title = titlesByKind[kind]?.[L] || titlesByKind[kind]?.es || kind.toUpperCase();
+
+    const card = document.createElement("div");
+    card.className = "projects-card";
+
+    // Cabecera + volver
+    const head = document.createElement("div");
+    head.className = "app-detail-head";
+    head.innerHTML = `
+      <div class="app-detail-bar">
+        <h3 style="margin:0">${title}</h3>
+        <button class="btn ghost" id="appsBack">← ${L==='es'?'Volver':'Back'}</button>
+      </div>`;
+    card.appendChild(head);
+
+    // Índice
+    if (items.length){
+      card.appendChild(buildIndex(items, kind));
+    }else{
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = L==='es' ? "No hay elementos todavía." : "No items yet.";
+      card.appendChild(empty);
+    }
+
+    // Detalles
+    items.forEach((a, i)=>{
+      const section = document.createElement("section");
+      section.id = `${kind}-${i}`;
+      section.className = "proj";
+
+      const h = document.createElement("h4");
+      h.textContent = a.title?.[L] || a.title?.es || a.title || (title+" "+(i+1));
+      h.style.margin = "8px 0";
+      card.appendChild(h);
+
+      const row = buildDetailRow(a, kind);
+      card.appendChild(row);
+
+      const hr = document.createElement("hr");
+      hr.className = "proj-sep";
+      card.appendChild(hr);
+    });
+
+    detail.appendChild(card);
+
+    // volver
+    $("#appsBack")?.addEventListener("click", ()=>{
+      detail.innerHTML = "";
+      stage.style.display = "";
+      scrollToViewWithOffset(root);
+    });
+  }
+
+  // Click esferas
+  $$(".sphere-btn", stage).forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const kind = btn.getAttribute("data-kind"); // util | game | elo
+      openKind(kind);
+    });
+  });
+}
+
+
+
+function renderProjects(){
+  const wrap = $("#projectsList");
+  if (!wrap) return;
+  const L = STATE.lang;
+
+  // Estructura esperada en CONTENT.projects:
+  // [{ title:{es,en}, desc:{es,en}, image:"...", link:"https://...", label:{es,en} }, ...]
+  const list = CONTENT.projects || [];
+
+  wrap.innerHTML = "";
+  list.forEach((p, i) => {
+    const item = document.createElement("section");
+    item.className = "proj";
+
+    // Cabecera de cada proyecto (título)
+    const h = document.createElement("h4");
+    h.textContent = p.title?.[L] || p.title?.es || p.title || `Proyecto ${i+1}`;
+    h.style.margin = "8px 0";
+    h.style.textAlign = "left";
+    item.appendChild(h);
+
+    // Bloque principal: imagen + texto (alternando)
+    const row = document.createElement("div");
+    row.className = "proj-item" + (i % 2 ? " alt" : "");
+
+    row.innerHTML = `
+      <div class="proj-media">
+        ${p.image ? `<img src="${p.image}" alt="${(p.alt?.[L]||p.alt?.es||h.textContent)}">`
+                   : `<div class="muted" style="padding:16px;text-align:center">Sin imagen</div>`}
+      </div>
+      <div class="proj-text">
+        <p>${p.desc?.[L] || p.desc?.es || ""}</p>
+      </div>
+    `;
+    item.appendChild(row);
+
+    // CTA centrado
+    if (p.link){
+      const cta = document.createElement("div");
+      cta.className = "proj-cta";
+      const a = document.createElement("a");
+      a.className = "btn primary";
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.href = p.link;
+      a.textContent = p.label?.[L] || p.label?.es || "Ir a la campaña";
+      cta.appendChild(a);
+      item.appendChild(cta);
+    }
+
+    // Separador entre proyectos
+    const hr = document.createElement("hr");
+    hr.className = "proj-sep";
+    item.appendChild(hr);
+
+    wrap.appendChild(item);
+  });
+}
+function renderEcos(){
+  const stage  = $("#creaStage");   // esferas
+  const detail = $("#creaDetail");  // donde pintamos el contenido
+  if (!stage || !detail) return;
+
+  const L = STATE.lang;
+
+  // === helpers de datos ===
+  const dataByKind = {
+    song:    () => CONTENT.creaSongs    || [],
+    podcast: () => CONTENT.creaPodcasts || [],
+    video:   () => CONTENT.creaVideos   || [],
+  };
+  const titlesByKind = {
+    song:    { es:"Canciones", en:"Songs" },
+    podcast: { es:"Podcasts",  en:"Podcasts" },
+    video:   { es:"Vídeos",     en:"Videos" },
+  };
+
+  function clearDetail(){ detail.innerHTML = ""; }
+
+  function makeCard(item, type){
+    const card = document.createElement("div");
+    card.className = "app-card";
+
+    const h = document.createElement("h4");
+    h.textContent = item.title?.[L] || item.title?.es || "—";
+    card.appendChild(h);
+
+    const p = document.createElement("p");
+    p.textContent = item.desc?.[L] || item.desc?.es || "";
+    card.appendChild(p);
+
+    if (type==="song" || type==="podcast"){
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.src = item.audio;
+      card.appendChild(audio);
+    } else if (type==="video"){
+      const video = document.createElement("video");
+      video.controls = true;
+      if (item.thumb) video.poster = item.thumb;
+      video.src = item.video;
+      card.appendChild(video);
+    }
+
+    if (item.footer?.[L] || item.footer?.es){
+      const f = document.createElement("div");
+      f.className = "app-footer";
+      f.innerHTML = `<p>${item.footer?.[L] || item.footer?.es}</p>`;
+      card.appendChild(f);
+    }
+
+    return card;
+  }
+
+  function openKind(kind){
+    // esconder esferas y preparar detalle
+    stage.style.display = "none";
+    clearDetail();
+
+    const items = (dataByKind[kind] && dataByKind[kind]()) || [];
+    const title = titlesByKind[kind]?.[L] || titlesByKind[kind]?.es || kind;
+
+    const card = document.createElement("div");
+    card.className = "projects-card";
+
+    // cabecera + volver
+    const head = document.createElement("div");
+    head.className = "app-detail-bar";
+    head.innerHTML = `
+      <h3 style="margin:0">${title}</h3>
+      <button class="btn ghost" id="ecosBack">← ${L==='es'?'Volver':'Back'}</button>
+    `;
+    card.appendChild(head);
+
+    // si hay elementos, píntalos
+    if (items.length){
+      items.forEach((it)=>{
+        const wrap = document.createElement("section");
+        wrap.className = "proj";
+        wrap.appendChild(makeCard(it, kind));
+        const hr = document.createElement("hr");
+        hr.className = "proj-sep";
+        card.appendChild(wrap);
+        card.appendChild(hr);
+      });
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = L==='es' ? "No hay elementos todavía." : "No items yet.";
+      card.appendChild(empty);
+    }
+
+    detail.appendChild(card);
+
+    // volver a esferas
+    $("#ecosBack")?.addEventListener("click", ()=>{
+      clearDetail();
+      stage.style.display = "";
+      scrollToViewWithOffset(stage, "smooth");
+    });
+  }
+
+  // === solo manejamos clicks en las esferas; no pintamos nada abajo por defecto
+  $$(".sphere-btn", stage).forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const kind = btn.getAttribute("data-kind"); // song | podcast | video
+      openKind(kind);
+    });
+  });
+
+  // aseguramos estado inicial
+  stage.style.display = "";
+  clearDetail();
+}
